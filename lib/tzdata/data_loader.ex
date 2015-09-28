@@ -5,10 +5,10 @@ defmodule Tzdata.DataLoader do
   @download_url "https://www.iana.org/time-zones/repository/tzdata-latest.tar.gz"
   #@download_url "https://www.iana.org/time-zones/repository/releases/tzdata2015a.tar.gz"
   def download_new(url\\@download_url) do
+    ensure_httpc_ready
     Logger.debug "Tzdata downloading new data from #{url}"
     set_latest_remote_poll_date
-    {:ok, 200, headers, client_ref}=:hackney.get(url, [], "", [])
-    {:ok, body} = :hackney.body(client_ref)
+    {:ok, {{_, 200, _}, headers, body}} = :httpc.request(:get, {String.to_char_list(url), []}, [], [body_format: :binary])
     content_length = content_length_from_headers(headers)
     new_dir_name ="priv/tmp_downloads/#{content_length}/"
     File.mkdir_p(new_dir_name)
@@ -25,9 +25,9 @@ defmodule Tzdata.DataLoader do
   end
   defp content_length_from_headers(headers) do
     headers
-    |> Enum.filter(fn {k, _v} -> k == "Content-Length" end)
+    |> Enum.filter(fn {k, _v} -> k == 'content-length' end)
     |> hd |> elem(1)
-    |> String.to_integer
+    |> List.to_integer
   end
 
   def release_version_for_dir(dir_name) do
@@ -42,15 +42,16 @@ defmodule Tzdata.DataLoader do
   end
 
   def latest_file_size(url\\@download_url) do
+    ensure_httpc_ready
     set_latest_remote_poll_date
-    :hackney.head(url, [], "", [])
+    :httpc.request(:head, {String.to_char_list(url), []}, [], [])
     |> do_latest_file_size
   end
-  defp do_latest_file_size({tag = :error, error}), do: {tag, error}
-  defp do_latest_file_size({tag, _resp_code, headers}) do
+  defp do_latest_file_size({:ok, {{_, 200, _}, headers, []}}) do
     size = headers |> content_length_from_headers
-    {tag, size}
+    {:ok, size}
   end
+  defp do_latest_file_size(other), do: {:error, other}
 
   def set_latest_remote_poll_date do
     {y, m, d} = current_date_utc
@@ -84,5 +85,10 @@ defmodule Tzdata.DataLoader do
 
   def remote_poll_file_name do
     Application.app_dir(:tzdata, "priv/latest_remote_poll.txt")
+  end
+
+  defp ensure_httpc_ready do
+    {:ok, _} = Application.ensure_all_started(:inets, :permanent)
+    {:ok, _} = Application.ensure_all_started(:ssl, :permanent)
   end
 end
